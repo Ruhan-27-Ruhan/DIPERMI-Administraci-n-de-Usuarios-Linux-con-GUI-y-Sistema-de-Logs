@@ -1,0 +1,928 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Gestión de Usuarios en Linux - GUI
+Autor: [Rubén Hans Rodríguez]
+Fecha: 31/3/2025
+IES Punta del Verde - Dpto. de Informática
+"""
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+import subprocess
+import logging
+import os
+import re  # Para validación de contraseña con expresiones regulares
+from datetime import datetime
+
+class UserManagerApp:
+    def __init__(self, root):
+        # Inicialización de la aplicación principal
+        self.root = root
+        self.root.title("Gestión de Usuarios Linux - IES Punta del Verde")
+        self.root.geometry("800x600")
+        self.setup_logging()      # Configurar sistema de logs
+        self.create_status_bar()  # Crear barra de estado
+        self.create_menu()        # Crear menú superior
+        self.create_widgets()     # Crear widgets principales
+        
+    def setup_logging(self):
+        """Configura el sistema de logging para registrar actividades"""
+        # Directorio para almacenar logs
+        log_dir = "/var/log/user_manager"
+        # Crear directorio si no existe
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+            os.chmod(log_dir, 0o755)  # Permisos: rwxr-xr-x
+        
+        # Configurar el logger principal
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)  # Nivel de registro: INFO
+        
+        # Configurar handler para escribir en archivo
+        handler = logging.FileHandler(
+            filename=f"{log_dir}/user_manager.log", 
+            encoding='utf-8'
+        )
+        # Formato de los mensajes de log
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%d/%m/%Y %H:%M:%S'
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        
+        # Registrar inicio de la aplicación
+        logging.info("Aplicación iniciada")
+        
+    def create_menu(self):
+        """Crea la barra de menú superior"""
+        menubar = tk.Menu(self.root)
+        
+        # Menú Archivo
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Exportar logs", command=self.export_logs)
+        file_menu.add_separator()
+        file_menu.add_command(label="Salir", command=self.root.quit)
+        menubar.add_cascade(label="Archivo", menu=file_menu)
+        
+        # Menú Ayuda
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="Manual de usuario", command=self.show_help)
+        help_menu.add_command(label="Acerca de", command=self.show_about)
+        menubar.add_cascade(label="Ayuda", menu=help_menu)
+        
+        # Configurar menú principal
+        self.root.config(menu=menubar)
+    
+    def create_widgets(self):
+        """Crea el widget de pestañas (notebook) y las pestañas principales"""
+        # Crear control de pestañas
+        self.tab_control = ttk.Notebook(self.root)
+        
+        # Pestaña de usuarios
+        self.tab_user = ttk.Frame(self.tab_control)
+        self.tab_control.add(self.tab_user, text='Gestión de Usuarios')
+        self.create_user_tab()  # Configurar contenido
+        
+        # Pestaña de grupos
+        self.tab_group = ttk.Frame(self.tab_control)
+        self.tab_control.add(self.tab_group, text='Gestión de Grupos')
+        self.create_group_tab()  # Configurar contenido
+        
+        # Pestaña de logs
+        self.tab_logs = ttk.Frame(self.tab_control)
+        self.tab_control.add(self.tab_logs, text='Registro de Actividades')
+        self.create_logs_tab()  # Configurar contenido
+        
+        # Empaquetar el control de pestañas
+        self.tab_control.pack(expand=1, fill="both", padx=5, pady=5)
+    
+    def create_user_tab(self):
+        """Crea la interfaz para la gestión de usuarios"""
+        # Marco principal
+        main_frame = ttk.Frame(self.tab_user)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Marco del formulario
+        form_frame = ttk.LabelFrame(main_frame, text="Formulario de Usuario", padding="10")
+        form_frame.pack(fill="x", padx=5, pady=5)
+        
+        # Campo: Nombre de usuario
+        ttk.Label(form_frame, text="Nombre de usuario:").grid(row=0, column=0, sticky="w", pady=2)
+        self.username_entry = ttk.Entry(form_frame)
+        self.username_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
+        # Vincular evento para actualizar directorio home automáticamente
+        self.username_entry.bind("<KeyRelease>", self.update_home_path)
+        
+        # Campo: Contraseña
+        ttk.Label(form_frame, text="Contraseña:").grid(row=1, column=0, sticky="w", pady=2)
+        self.password_entry = ttk.Entry(form_frame, show="*")
+        self.password_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
+        
+        # Campo: Confirmar contraseña
+        ttk.Label(form_frame, text="Confirmar contraseña:").grid(row=2, column=0, sticky="w", pady=2)
+        self.confirm_password_entry = ttk.Entry(form_frame, show="*")
+        self.confirm_password_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
+        
+        # Campo: Directorio home
+        ttk.Label(form_frame, text="Directorio home:").grid(row=3, column=0, sticky="w", pady=2)
+        self.home_entry = ttk.Entry(form_frame)
+        self.home_entry.grid(row=3, column=1, sticky="ew", padx=5, pady=2)
+        # Valor predeterminado inicial
+        self.home_entry.insert(0, "/home/")
+        
+        # Campo: Shell
+        ttk.Label(form_frame, text="Shell:").grid(row=4, column=0, sticky="w", pady=2)
+        self.shell_combobox = ttk.Combobox(form_frame, values=[
+            "/bin/bash", 
+            "/bin/sh", 
+            "/usr/sbin/nologin",
+            "/bin/zsh",
+            "/bin/fish"
+        ])
+        self.shell_combobox.grid(row=4, column=1, sticky="ew", padx=5, pady=2)
+        self.shell_combobox.set("/bin/bash")  # Valor predeterminado
+        
+        # Lista de grupos (selección múltiple)
+        ttk.Label(form_frame, text="Grupos:").grid(row=5, column=0, sticky="nw", pady=2)
+        self.group_listbox = tk.Listbox(form_frame, selectmode="multiple", height=6, exportselection=False)
+        self.group_listbox.grid(row=5, column=1, sticky="ew", padx=5, pady=2)
+
+        # Cargar grupos del sistema usando comando getent
+        groups_result = subprocess.run(['getent', 'group'], capture_output=True, text=True, encoding='utf-8')
+        if groups_result.returncode == 0:
+            for line in groups_result.stdout.splitlines():
+                group = line.split(":")[0]  # Extraer nombre del grupo
+                self.group_listbox.insert(tk.END, group)
+        
+        # Botones de acciones
+        button_frame = ttk.Frame(form_frame)
+        button_frame.grid(row=6, column=0, columnspan=2, pady=10)
+        
+        ttk.Button(button_frame, text="Crear Usuario", command=self.create_user).grid(row=0, column=0, padx=5)
+        ttk.Button(button_frame, text="Modificar Usuario", command=self.modify_user).grid(row=0, column=1, padx=5)
+        ttk.Button(button_frame, text="Eliminar Usuario", command=self.delete_user).grid(row=0, column=2, padx=5)
+        ttk.Button(button_frame, text="Limpiar Campos", command=self.clear_fields).grid(row=0, column=3, padx=5)
+        
+        # Lista de usuarios del sistema
+        list_frame = ttk.LabelFrame(main_frame, text="Usuarios del Sistema", padding="10")
+        list_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Crear Treeview para mostrar usuarios
+        self.user_tree = ttk.Treeview(list_frame, columns=("username", "uid", "gid", "groups", "home", "shell"), show="headings")
+        
+        # Configurar columnas
+        for col in ("username", "uid", "gid", "groups", "home", "shell"):
+            self.user_tree.heading(col, text=col.capitalize())  # Encabezado
+            self.user_tree.column(col, width=100, anchor="w")   # Ancho y alineación
+        
+        # Scrollbar para navegación
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.user_tree.yview)
+        self.user_tree.configure(yscrollcommand=scrollbar.set)
+        self.user_tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Cargar usuarios y vincular evento de selección
+        self.load_user_list()
+        self.user_tree.bind("<<TreeviewSelect>>", self.on_user_select)
+    
+    def update_home_path(self, event):
+        """Actualiza automáticamente el directorio home basado en el nombre de usuario"""
+        # Obtener nombre de usuario actual
+        username = self.username_entry.get().strip()
+        current_home = self.home_entry.get()
+        
+        # Solo actualizar si hay un nombre de usuario
+        if not username:
+            return
+            
+        # Actualizar solo si el valor actual es el predeterminado o está vacío
+        if current_home == "/home/" or current_home == "":
+            self.home_entry.delete(0, tk.END)
+            self.home_entry.insert(0, f"/home/{username}")
+    
+    def create_group_tab(self):
+        """Crea la interfaz para la gestión de grupos"""
+        # Marco principal
+        main_frame = ttk.Frame(self.tab_group)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Marco del formulario
+        form_frame = ttk.LabelFrame(main_frame, text="Formulario de Grupo", padding="10")
+        form_frame.pack(fill="x", padx=5, pady=5)
+        
+        # Campo: Nombre del grupo
+        ttk.Label(form_frame, text="Nombre del grupo:").grid(row=0, column=0, sticky="w", pady=2)
+        self.group_entry = ttk.Entry(form_frame)
+        self.group_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
+        
+        # Campo: ID del grupo (GID)
+        ttk.Label(form_frame, text="ID del grupo (GID):").grid(row=1, column=0, sticky="w", pady=2)
+        self.gid_entry = ttk.Entry(form_frame)
+        self.gid_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
+        
+        # Botones de acciones
+        button_frame = ttk.Frame(form_frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=10)
+        
+        ttk.Button(button_frame, text="Crear Grupo", command=self.create_group).grid(row=0, column=0, padx=5)
+        ttk.Button(button_frame, text="Eliminar Grupo", command=self.delete_group).grid(row=0, column=1, padx=5)
+        ttk.Button(button_frame, text="Limpiar Campos", command=self.clear_group_fields).grid(row=0, column=2, padx=5)
+        
+        # Lista de grupos del sistema
+        list_frame = ttk.LabelFrame(main_frame, text="Grupos del Sistema", padding="10")
+        list_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Crear Treeview para mostrar grupos
+        self.group_tree = ttk.Treeview(list_frame, columns=("groupname", "gid", "members"), show="headings")
+        
+        # Configurar columnas
+        for col in ("groupname", "gid", "members"):
+            self.group_tree.heading(col, text=col.capitalize())  # Encabezado
+            self.group_tree.column(col, width=100, anchor="w")   # Ancho y alineación
+        
+        # Scrollbar para navegación
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.group_tree.yview)
+        self.group_tree.configure(yscrollcommand=scrollbar.set)
+        self.group_tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Cargar grupos y vincular evento de selección
+        self.load_group_list()
+        self.group_tree.bind("<<TreeviewSelect>>", self.on_group_select)
+    
+    def create_logs_tab(self):
+        """Crea la interfaz para visualizar registros de actividad"""
+        # Marco principal
+        main_frame = ttk.Frame(self.tab_logs)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Área de texto para logs (solo lectura)
+        self.log_text = tk.Text(main_frame, wrap="word", state="disabled")
+        scrollbar = ttk.Scrollbar(main_frame, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=scrollbar.set)
+        
+        self.log_text.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Botones para gestión de logs
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x", pady=5)
+        
+        ttk.Button(button_frame, text="Actualizar Logs", command=self.update_logs).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Limpiar Logs", command=self.clear_logs).pack(side="left", padx=5)
+        
+        # Cargar logs iniciales
+        self.update_logs()
+    
+    def create_status_bar(self):
+        """Crea la barra de estado en la parte inferior de la ventana"""
+        self.status_var = tk.StringVar()
+        self.status_var.set("Listo")
+        status_bar = ttk.Label(self.root, textvariable=self.status_var, relief="sunken", anchor="w")
+        status_bar.pack(side="bottom", fill="x")
+    
+    def update_status(self, message):
+        """Actualiza el mensaje en la barra de estado"""
+        self.status_var.set(message)
+        self.root.update_idletasks()  # Forzar actualización de la interfaz
+    
+    # ==============================
+    # Funcionalidades de usuarios
+    # ==============================
+    
+    def validate_password_strength(self, password):
+        """Valida que la contraseña cumpla con los requisitos de seguridad"""
+        # Longitud mínima de 8 caracteres
+        if len(password) < 8:
+            return False, "La contraseña debe tener al menos 8 caracteres"
+        
+        # Al menos una letra mayúscula
+        if not re.search(r'[A-Z]', password):
+            return False, "La contraseña debe contener al menos una letra mayúscula"
+            
+        # Al menos una letra minúscula
+        if not re.search(r'[a-z]', password):
+            return False, "La contraseña debe contener al menos una letra minúscula"
+            
+        # Al menos un carácter especial
+        if not re.search(r'[!@#$%^&*()_+{}\[\]:;<>,.?/~`\-=|\\]', password):
+            return False, "La contraseña debe contener al menos un carácter especial"
+            
+        return True, ""
+    
+    def validate_user_fields(self, is_create=False):
+        """
+        Valida los campos del formulario de usuario
+        is_create: True para creación (requiere contraseña), False para modificación
+        """
+        # Obtener valores de los campos
+        username = self.username_entry.get().strip()
+        password = self.password_entry.get()
+        confirm_password = self.confirm_password_entry.get()
+        home = self.home_entry.get().strip()
+        
+        # Validar nombre de usuario
+        if not username:
+            messagebox.showwarning("Validación", "Nombre de usuario requerido")
+            return False
+        
+        # Validar directorio home
+        if not home:
+            messagebox.showwarning("Validación", "Directorio home requerido")
+            return False
+        
+        # Para creación de usuario: contraseña obligatoria
+        if is_create:
+            if not password or not confirm_password:
+                messagebox.showwarning("Validación", "La contraseña es obligatoria para crear un usuario")
+                return False
+        
+        # Si se proporcionó contraseña, validar coincidencia y fortaleza
+        if password or confirm_password:
+            if password != confirm_password:
+                messagebox.showwarning("Validación", "Las contraseñas no coinciden")
+                return False
+            
+            # Validar requisitos de seguridad
+            is_valid, error_msg = self.validate_password_strength(password)
+            if not is_valid:
+                messagebox.showwarning("Validación", f"Contraseña incorrecta\n{error_msg}")
+                return False
+        
+        return True
+    
+    def load_user_list(self):
+        """Carga la lista de usuarios del sistema usando el comando getent"""
+        try:
+            # Limpiar lista actual
+            for item in self.user_tree.get_children():
+                self.user_tree.delete(item)
+            
+            # Ejecutar comando para obtener usuarios
+            result = subprocess.run(['getent', 'passwd'], capture_output=True, text=True, encoding='utf-8')
+            
+            if result.returncode == 0:
+                users = result.stdout.splitlines()
+                
+                # Procesar cada usuario
+                for user in users:
+                    parts = user.split(':')
+                    if len(parts) >= 7:
+                        username = parts[0]
+                        uid = parts[2]
+                        gid = parts[3]
+                        home = parts[5]
+                        shell = parts[6]
+                        
+                        # Obtener grupos del usuario
+                        groups_result = subprocess.run(
+                            ['groups', username],
+                            capture_output=True,
+                            text=True,
+                            encoding='utf-8'
+                        )
+                        
+                        # Extraer grupos si el comando fue exitoso
+                        if groups_result.returncode == 0:
+                            groups = groups_result.stdout.split(':')[1].strip()
+                        else:
+                            groups = ""
+                        
+                        # Añadir usuario a la lista
+                        self.user_tree.insert("", "end", values=(username, uid, gid, groups, home, shell))
+                
+                # Actualizar estado
+                self.update_status(f"Usuarios cargados: {len(users)}")
+                logging.info("Lista de usuarios actualizada")
+            else:
+                messagebox.showerror("Error", "Error al obtener usuarios")
+                logging.error(f"Error getent: {result.stderr}")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Excepción: {str(e)}")
+            logging.error(f"Excepción load_user_list: {str(e)}")
+    
+    def on_user_select(self, event):
+        """Evento al seleccionar un usuario en la lista"""
+        selected = self.user_tree.selection()
+        if selected:
+            # Obtener datos del usuario seleccionado
+            user_data = self.user_tree.item(selected[0])['values']
+            
+            # Rellenar campos del formulario
+            self.username_entry.delete(0, tk.END)
+            self.username_entry.insert(0, user_data[0])  # Nombre de usuario
+            self.home_entry.delete(0, tk.END)
+            self.home_entry.insert(0, user_data[4])    # Directorio home
+            self.shell_combobox.set(user_data[5])       # Shell
+            
+            # Seleccionar grupos del usuario
+            self.group_listbox.selection_clear(0, tk.END)
+            if len(user_data) > 3 and user_data[3]:
+                user_groups = user_data[3].split()  # Convertir cadena de grupos a lista
+                all_groups = self.group_listbox.get(0, tk.END)
+                # Marcar grupos del usuario
+                for idx, group in enumerate(all_groups):
+                    if group in user_groups:
+                        self.group_listbox.selection_set(idx)
+    
+    def create_user(self):
+        """Crea un nuevo usuario en el sistema"""
+        # Validar campos (requiere contraseña para creación)
+        if not self.validate_user_fields(is_create=True):
+            return
+            
+        # Obtener valores del formulario
+        username = self.username_entry.get().strip()
+        password = self.password_entry.get()
+        home = self.home_entry.get().strip()
+        shell = self.shell_combobox.get()
+        
+        try:
+            # Verificar si el usuario ya existe
+            if self.user_exists(username):
+                messagebox.showerror("Error", f"Usuario '{username}' ya existe")
+                return
+            
+            # Si el directorio home es el predeterminado, actualizarlo
+            if home == "/home/":
+                home = f"/home/{username}"
+                self.home_entry.delete(0, tk.END)
+                self.home_entry.insert(0, home)
+            
+            # Construir comando useradd
+            cmd = ['sudo', 'useradd']
+            if home: cmd.extend(['-d', home])   # Directorio home personalizado
+            if shell: cmd.extend(['-s', shell]) # Shell personalizado
+            cmd.extend(['-m', username])        # Crear directorio home
+            
+            # Ejecutar comando
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
+            
+            if result.returncode == 0:
+                # Añadir a grupos seleccionados
+                selected_indices = self.group_listbox.curselection()
+                selected_groups = [self.group_listbox.get(i) for i in selected_indices]
+                if selected_groups:
+                    subprocess.run(['sudo', 'usermod', '-aG', ','.join(selected_groups), username])
+                
+                # Establecer contraseña
+                self.set_password(username, password)
+                
+                # Mostrar éxito y actualizar
+                messagebox.showinfo("Éxito", f"Usuario '{username}' creado con home en {home}")
+                logging.info(f"Usuario creado: {username} con home en {home}")
+                self.load_user_list()
+                self.clear_fields()
+            else:
+                messagebox.showerror("Error", f"Error al crear usuario: {result.stderr}")
+                logging.error(f"Error create_user: {result.stderr}")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error: {str(e)}")
+            logging.error(f"Excepción create_user: {str(e)}")
+    
+    def modify_user(self):
+        """Modifica un usuario existente en el sistema"""
+        # Validar campos (contraseña opcional)
+        if not self.validate_user_fields(is_create=False):
+            return
+            
+        # Obtener valores del formulario
+        username = self.username_entry.get().strip()
+        password = self.password_entry.get()
+        home = self.home_entry.get().strip()
+        shell = self.shell_combobox.get()
+        
+        try:
+            # Verificar existencia del usuario
+            if not self.user_exists(username):
+                messagebox.showerror("Error", f"Usuario '{username}' no existe")
+                return
+            
+            # Construir comando usermod
+            cmd = ['sudo', 'usermod']
+            if home: cmd.extend(['-d', home])   # Actualizar directorio home
+            if shell: cmd.extend(['-s', shell]) # Actualizar shell
+            cmd.append(username)                # Nombre de usuario
+            
+            # Ejecutar comando
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
+            
+            if result.returncode == 0:
+                # Actualizar grupos
+                selected_indices = self.group_listbox.curselection()
+                selected_groups = [self.group_listbox.get(i) for i in selected_indices]
+                if selected_groups:
+                    subprocess.run(['sudo', 'usermod', '-G', ','.join(selected_groups), username])
+                
+                # Actualizar contraseña si se proporcionó
+                if password:
+                    self.set_password(username, password)
+                
+                # Mostrar éxito y actualizar
+                messagebox.showinfo("Éxito", f"Usuario '{username}' actualizado")
+                logging.info(f"Usuario modificado: {username}")
+                self.load_user_list()
+            else:
+                messagebox.showerror("Error", f"Error al modificar: {result.stderr}")
+                logging.error(f"Error modify_user: {result.stderr}")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error: {str(e)}")
+            logging.error(f"Excepción modify_user: {str(e)}")
+    
+    def delete_user(self):
+        """Elimina un usuario con manejo de errores"""
+        username = self.username_entry.get().strip()
+        
+        # Validar selección
+        if not username:
+            messagebox.showwarning("Validación", "Seleccione un usuario")
+            return
+            
+        # Verificar existencia
+        if not self.user_exists(username):
+            messagebox.showerror("Error", "El usuario no existe")
+            return
+            
+        # Confirmar eliminación
+        confirm = messagebox.askyesno( 
+            "Confirmar eliminación",
+            f"¿Eliminar usuario '{username}'?",
+            icon="warning")       
+
+        if not confirm:
+            return
+
+        try:
+            # Sanitizar nombre de usuario (manejar espacios)
+            sanitized_user = username.replace(" ", "\\ ")
+            
+            # Ejecutar comando userdel con opción -r (eliminar home)
+            result = subprocess.run(
+                ['sudo', 'userdel', '-r', sanitized_user],
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace'
+            )
+
+            # Manejar resultado
+            if result.returncode == 0:
+                msg = f"Usuario '{username}' eliminado"
+                messagebox.showinfo("Éxito", msg)
+                logging.info(msg)
+            else:
+                error_msg = result.stderr
+                # Manejar errores comunes
+                if "mail spool" in error_msg:
+                    error_msg = "✔️ Buzón no encontrado (acción segura)"
+                if "/home/ no pertenece" in error_msg:
+                    error_msg = f"⚠️ Elimine manualmente: sudo rm -rf /home/{username}"
+                
+                messagebox.showwarning("Eliminación parcial", f"Usuario desvinculado\n{error_msg}")
+                logging.warning(f"Eliminación parcial: {error_msg}")
+
+            # Actualizar lista y limpiar campos
+            self.load_user_list()
+            self.clear_fields()
+
+        except Exception as e:
+            error_msg = f"Error crítico: {str(e)}"
+            messagebox.showerror("Error", error_msg)
+            logging.error(error_msg)
+    
+    def user_exists(self, username):
+        """Verifica si un usuario existe usando comando id"""
+        try:
+            # Ejecutar comando id
+            subprocess.run(
+                ['id', username],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding='utf-8'
+            )
+            return True
+        except subprocess.CalledProcessError:
+            return False
+    
+    def set_password(self, username, password):
+        """Establece la contraseña del usuario usando chpasswd"""
+        try:
+            # Crear proceso para cambiar contraseña
+            process = subprocess.Popen(
+                ['sudo', 'chpasswd'],
+                stdin=subprocess.PIPE,
+                text=True,
+                encoding='utf-8'
+            )
+            # Enviar usuario:contraseña al proceso
+            process.communicate(f"{username}:{password}\n")
+            logging.info(f"Contraseña actualizada para {username}")
+        except Exception as e:
+            logging.error(f"Error set_password: {str(e)}")
+            raise
+    
+    def clear_fields(self):
+        """Limpia los campos del formulario y restablece valores predeterminados"""
+        self.username_entry.delete(0, tk.END)
+        self.password_entry.delete(0, tk.END)
+        self.confirm_password_entry.delete(0, tk.END)
+        self.home_entry.delete(0, tk.END)
+        self.home_entry.insert(0, "/home/")  # Valor predeterminado
+        self.shell_combobox.set("/bin/bash") # Valor predeterminado
+        self.group_listbox.selection_clear(0, tk.END)  # Deseleccionar grupos
+        self.update_status("Campos limpiados")
+    
+    # ==============================
+    # Funcionalidades de grupos
+    # ==============================
+    
+    def load_group_list(self):
+        """Carga la lista de grupos del sistema usando getent"""
+        try:
+            # Limpiar lista actual
+            for item in self.group_tree.get_children():
+                self.group_tree.delete(item)
+            
+            # Ejecutar comando para obtener grupos
+            result = subprocess.run(['getent', 'group'], capture_output=True, text=True, encoding='utf-8')
+            
+            if result.returncode == 0:
+                groups = result.stdout.splitlines()
+                # Procesar cada grupo
+                for group in groups:
+                    parts = group.split(':')
+                    if len(parts) >= 4:
+                        groupname = parts[0]  # Nombre del grupo
+                        gid = parts[2]        # ID del grupo
+                        members = parts[3] if len(parts) > 3 else ""  # Miembros
+                        self.group_tree.insert("", "end", values=(groupname, gid, members))
+                
+                # Actualizar estado
+                self.update_status(f"Grupos cargados: {len(groups)}")
+                logging.info("Lista de grupos actualizada")
+            else:
+                messagebox.showerror("Error", "Error al obtener grupos")
+                logging.error(f"Error getent group: {result.stderr}")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Excepción: {str(e)}")
+            logging.error(f"Excepción load_group_list: {str(e)}")
+    
+    def on_group_select(self, event):
+        """Evento al seleccionar un grupo en la lista"""
+        selected = self.group_tree.selection()
+        if selected:
+            # Obtener datos del grupo seleccionado
+            group_data = self.group_tree.item(selected[0])['values']
+            # Rellenar campos del formulario
+            self.group_entry.delete(0, tk.END)
+            self.group_entry.insert(0, group_data[0])  # Nombre del grupo
+            self.gid_entry.delete(0, tk.END)
+            self.gid_entry.insert(0, group_data[1])    # GID
+    
+    def validate_group_fields(self):
+        """Valida los campos del formulario de grupo"""
+        groupname = self.group_entry.get().strip()
+        if not groupname:
+            messagebox.showwarning("Validación", "Nombre de grupo requerido")
+            return False
+        return True
+    
+    def create_group(self):
+        """Crea un nuevo grupo en el sistema"""
+        if not self.validate_group_fields():
+            return
+            
+        # Obtener valores del formulario
+        groupname = self.group_entry.get().strip()
+        gid = self.gid_entry.get().strip()
+        
+        try:
+            # Verificar si el grupo ya existe
+            if self.group_exists(groupname):
+                messagebox.showerror("Error", f"Grupo '{groupname}' ya existe")
+                return
+            
+            # Construir comando groupadd
+            cmd = ['sudo', 'groupadd']
+            if gid: cmd.extend(['-g', gid])  # Especificar GID si se proporcionó
+            cmd.append(groupname)
+            
+            # Ejecutar comando
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
+            
+            if result.returncode == 0:
+                # Mostrar éxito y actualizar
+                messagebox.showinfo("Éxito", f"Grupo '{groupname}' creado")
+                logging.info(f"Grupo creado: {groupname}")
+                self.load_group_list()
+                self.clear_group_fields()
+            else:
+                messagebox.showerror("Error", f"Error al crear grupo: {result.stderr}")
+                logging.error(f"Error create_group: {result.stderr}")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error: {str(e)}")
+            logging.error(f"Excepción create_group: {str(e)}")
+    
+    def delete_group(self):
+        """Elimina un grupo del sistema"""
+        groupname = self.group_entry.get().strip()
+        
+        # Validar selección
+        if not groupname:
+            messagebox.showwarning("Validación", "Seleccione un grupo")
+            return
+            
+        # Verificar existencia
+        if not self.group_exists(groupname):
+            messagebox.showerror("Error", "El grupo no existe")
+            return
+            
+        # Confirmar eliminación
+        if messagebox.askyesno(
+            "Confirmar eliminación",
+            f"¿Eliminar grupo '{groupname}'?",
+            icon="warning"
+        ):
+            try:
+                # Ejecutar comando groupdel
+                result = subprocess.run(
+                    ['sudo', 'groupdel', groupname],
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8'
+                )
+                
+                if result.returncode == 0:
+                    # Mostrar éxito y actualizar
+                    messagebox.showinfo("Éxito", f"Grupo '{groupname}' eliminado")
+                    logging.info(f"Grupo eliminado: {groupname}")
+                    self.load_group_list()
+                    self.clear_group_fields()
+                else:
+                    messagebox.showerror("Error", f"Error: {result.stderr}")
+                    logging.error(f"Error delete_group: {result.stderr}")
+                    
+            except Exception as e:
+                messagebox.showerror("Error", f"Error: {str(e)}")
+                logging.error(f"Excepción delete_group: {str(e)}")
+    
+    def group_exists(self, groupname):
+        """Verifica si un grupo existe usando getent"""
+        try:
+            # Ejecutar comando getent
+            subprocess.run(
+                ['getent', 'group', groupname],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding='utf-8'
+            )
+            return True
+        except subprocess.CalledProcessError:
+            return False
+    
+    def clear_group_fields(self):
+        """Limpia los campos del formulario de grupos"""
+        self.group_entry.delete(0, tk.END)
+        self.gid_entry.delete(0, tk.END)
+        self.update_status("Campos de grupo limpiados")
+    
+    # ==============================
+    # Funcionalidades de logs
+    # ==============================
+    
+    def update_logs(self):
+        """Actualiza el contenido de los logs en la interfaz"""
+        try:
+            # Leer archivo de logs
+            with open("/var/log/user_manager/user_manager.log", "r", encoding='utf-8') as f:
+                log_content = f.read()
+            
+            # Actualizar widget de texto
+            self.log_text.config(state="normal")
+            self.log_text.delete(1.0, tk.END)  # Limpiar contenido anterior
+            self.log_text.insert(tk.END, log_content)  # Insertar nuevo contenido
+            self.log_text.config(state="disabled")     # Bloquear edición
+            self.log_text.yview(tk.END)               # Desplazar al final
+            self.update_status("Logs actualizados")
+            
+        except FileNotFoundError:
+            # Manejar archivo no encontrado
+            self.log_text.config(state="normal")
+            self.log_text.delete(1.0, tk.END)
+            self.log_text.insert(tk.END, "Archivo de logs no encontrado")
+            self.log_text.config(state="disabled")
+        except Exception as e:
+            self.log_text.insert(tk.END, f"Error: {str(e)}")
+    
+    def clear_logs(self):
+        """Borra el contenido del archivo de logs"""
+        # Confirmar acción peligrosa
+        if messagebox.askyesno(
+            "Confirmar",
+            "¿Borrar todos los logs? Esta acción es irreversible",
+            icon="warning"
+        ):
+            try:
+                # Sobrescribir archivo con contenido vacío
+                with open("/var/log/user_manager/user_manager.log", "w", encoding='utf-8') as f:
+                    f.write("")
+                # Actualizar visualización
+                self.update_logs()
+                messagebox.showinfo("Éxito", "Logs borrados")
+                logging.info("Logs borrados manualmente")
+            except Exception as e:
+                messagebox.showerror("Error", f"Error: {str(e)}")
+                logging.error(f"Error clear_logs: {str(e)}")
+    
+    def export_logs(self):
+        """Exporta los logs a un archivo seleccionado por el usuario"""
+        # Diálogo para seleccionar ubicación de guardado
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".log",
+            filetypes=[("Archivos log", "*.log"), ("Todos", "*.*")],
+            title="Guardar logs como"
+        )
+        if file_path:
+            try:
+                # Copiar contenido del log
+                with open("/var/log/user_manager/user_manager.log", "r", encoding='utf-8') as src, \
+                     open(file_path, "w", encoding='utf-8') as dest:
+                    dest.write(src.read())
+                # Mostrar éxito
+                messagebox.showinfo("Éxito", f"Logs exportados a:\n{file_path}")
+                logging.info(f"Logs exportados: {file_path}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Error: {str(e)}")
+                logging.error(f"Error export_logs: {str(e)}")
+    
+    # ==============================
+    # Funciones del menú
+    # ==============================
+    
+    def show_help(self):
+        """Muestra el manual de usuario en un cuadro de diálogo"""
+        help_text = """MANUAL DE USUARIO
+
+1. Gestión de Usuarios:
+   - Crear: Complete campos y haga clic en 'Crear Usuario'
+     * La contraseña es obligatoria para crear usuarios
+     * El directorio home predeterminado es /home/[nombre de usuario]
+   - Modificar: Seleccione usuario, edite campos y haga clic en 'Modificar'
+     * La contraseña es opcional (solo se actualiza si se proporciona)
+   - Eliminar: Seleccione usuario y haga clic en 'Eliminar'
+
+2. Gestión de Grupos:
+   - Crear: Ingrese nombre y GID (opcional), luego 'Crear Grupo'
+   - Eliminar: Seleccione grupo y haga clic en 'Eliminar Grupo'
+
+3. Registros:
+   - Actualice o exporte los logs según necesidad
+
+REQUISITOS DE CONTRASEÑA:
+- Mínimo 8 caracteres
+- Al menos una letra mayúscula
+- Al menos una letra minúscula
+- Al menos un carácter especial: !@#$%^&*()_+{}[]:;<>,.?/~`-=|\\
+
+Requisitos:
+- Ejecutar con permisos sudo
+- Sistema basado en Linux"""
+        messagebox.showinfo("Manual de Usuario", help_text)
+    
+    def show_about(self):
+        """Muestra información 'Acerca de' en un cuadro de diálogo"""
+        about_text = """Gestión de Usuarios Linux v1.0
+
+Desarrollado para IES Punta del Verde
+Departamento de Informática
+Tecnologías usadas:
+- Python 3
+- Tkinter
+- Comandos Linux"""
+        messagebox.showinfo("Acerca de", about_text)
+
+def main():
+    """Función principal que inicia la aplicación"""
+    # Crear ventana principal
+    root = tk.Tk()
+    # Configurar estilo
+    style = ttk.Style()
+    style.theme_use("clam")  # Usar tema "clam" para widgets ttk
+    # Configurar tamaño de ventana
+    root.geometry("900x700")
+    root.minsize(800, 600)   # Tamaño mínimo
+    # Iniciar aplicación
+    app = UserManagerApp(root)
+    # Iniciar bucle principal de eventos
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
